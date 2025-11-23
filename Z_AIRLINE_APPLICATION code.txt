@@ -1,0 +1,489 @@
+*&---------------------------------------------------------------------*
+*& Report Z_AIRLINE_APPLICATION
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT z_airline_application.
+
+CLASS lcl_event_handler DEFINITION.
+  PUBLIC SECTION.
+    METHODS: on_double_click FOR EVENT double_click OF cl_gui_alv_grid
+      IMPORTING e_row e_column.
+ENDCLASS.
+
+CLASS lcl_event_handler IMPLEMENTATION.
+  METHOD on_double_click.
+    PERFORM handle_double_click USING e_row-index.
+  ENDMETHOD.
+ENDCLASS.
+
+
+DATA: g_pass_nr          TYPE zzz_pass_tab-zid_pass,
+      g_dep_cit          TYPE zflightschedule-z_dep_city,
+      g_arr_cit          TYPE zflightschedule-z_arr_city,
+      gr_container       TYPE REF TO cl_gui_custom_container,
+      g_password         TYPE zzz_pass_tab-z_password,
+      ls_container       TYPE zzz_str_flight_data,
+      lt_fieldcat        TYPE lvc_t_fcat,
+      gr_event_handler   TYPE REF TO lcl_event_handler,
+      gs_selected_flight TYPE zzz_str_flight_data,
+      gv_biz_price       TYPE zzz_pricelist-zbizprice,
+      gs_passenger       TYPE zzz_pass_tab,
+      g_numer_lotu       TYPE zflightschedule-z_fli_nr,
+      g_wylot            TYPE zflightschedule-z_dep_city,
+      g_przylot          TYPE zflightschedule-z_arr_city,
+      g_data             TYPE zflightschedule-z_fli_date,
+      g_godzina          TYPE zflightschedule-z_dep_time,
+      g_klasa            TYPE char10,
+      g_waluta           TYPE zzz_pricelist-zcurrency,
+      g_imie             TYPE zzz_pass_tab-z_fir_name,
+      g_nazwisko         TYPE zzz_pass_tab-z_sur_name,
+      g_typ_dokumentu    TYPE zzz_pass_tab-z_doc_type,
+      g_numer_dokumentu  TYPE zzz_pass_tab-z_doc_nr,
+      g_nr_telefonu      TYPE zzz_pass_tab-z_tel_nr,
+      g_email            TYPE zzz_pass_tab-z_email_add,
+      g_cena             TYPE zzz_pricelist-zbizprice,
+      ls_reservation     TYPE zzz_reservations,
+      ls_fcat            TYPE lvc_s_fcat,
+      lt_data            TYPE STANDARD TABLE OF zzz_str_flight_data,
+      ls_data            TYPE zzz_str_flight_data.
+
+
+
+START-OF-SELECTION.
+
+ CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_structure_name = 'ZZZ_STR_FLIGHT_DATA'
+    CHANGING
+      ct_fieldcat      = lt_fieldcat
+    EXCEPTIONS
+      OTHERS           = 3.
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+
+  DELETE lt_fieldcat WHERE fieldname = 'ZBUSSCL' OR fieldname = 'ZECONCL'.
+
+
+  DELETE lt_fieldcat WHERE fieldname = 'Z_BIZ_STATUS' OR fieldname = 'Z_ECO_STATUS'.
+
+
+  CLEAR ls_fcat.
+  ls_fcat-fieldname = 'Z_BIZ_STATUS'.
+  ls_fcat-coltext = 'Kl. Biznes (wolne/zajęte)'.
+  ls_fcat-col_pos = 7.
+  APPEND ls_fcat TO lt_fieldcat.
+
+  CLEAR ls_fcat.
+  ls_fcat-fieldname = 'Z_ECO_STATUS'.
+  ls_fcat-coltext = 'Kl. Ekonomiczna (wolne/zajęte)'.
+  ls_fcat-col_pos = 8.
+  APPEND ls_fcat TO lt_fieldcat.
+
+  CALL SCREEN 0100.
+
+
+*---------------------------------------------------------------------*
+*  EKRAN 0100
+*---------------------------------------------------------------------*
+
+MODULE status_0100 OUTPUT.
+  SET PF-STATUS 'PASSENGER_NR'.
+  SET TITLEBAR 'LOGOWANIE'.
+ENDMODULE.
+
+MODULE user_command_0100 INPUT.
+
+  CASE sy-ucomm.
+
+    WHEN 'GO_REJESTR'.
+      CALL TRANSACTION 'Z_PASAZER_01'.
+
+    WHEN 'BACK'.
+      SET SCREEN 0.
+
+    WHEN 'EXECUTE'.
+
+
+      DATA: lv_passnr   TYPE zzz_pass_tab-zid_pass,
+            lv_password TYPE zzz_pass_tab-z_password.
+
+
+      SELECT SINGLE z_password
+          INTO @lv_password
+         FROM zzz_pass_tab
+        WHERE zid_pass = @g_pass_nr.
+
+      IF sy-subrc <> 0.
+        MESSAGE 'Podany numer pasażera nie istnieje' TYPE 'S' DISPLAY LIKE 'E'.
+
+      ELSEIF lv_password <> g_password.
+        MESSAGE 'Nieprawidłowe hasło' TYPE 'S' DISPLAY LIKE 'E'.
+
+      ELSE.
+
+        SET SCREEN 0200.
+        LEAVE SCREEN.
+      ENDIF.
+
+  ENDCASE.
+
+ENDMODULE.
+
+*---------------------------------------------------------------------*
+*  EKRAN 0200
+*---------------------------------------------------------------------*
+
+
+
+MODULE status_0200 OUTPUT.
+  SET PF-STATUS 'DEP_ARR_SELECT'.
+  SET TITLEBAR 'WYSZUKAJ'.
+
+  DATA: lt_dep_values TYPE vrm_values,
+        ls_value      TYPE vrm_value.
+
+  SELECT DISTINCT z_dep_city FROM zflightschedule INTO TABLE @DATA(lt_dep_cities).
+
+  CLEAR lt_dep_values.
+
+  LOOP AT lt_dep_cities INTO DATA(lv_dep).
+    ls_value-key  = lv_dep.
+    ls_value-text = lv_dep.
+    APPEND ls_value TO lt_dep_values.
+  ENDLOOP.
+
+  CALL FUNCTION 'VRM_SET_VALUES'
+    EXPORTING
+      id     = 'G_DEP_CIT'
+      values = lt_dep_values.
+
+  DATA: lt_arr_values TYPE vrm_values,
+        ls_arr_value  TYPE vrm_value.
+
+  CLEAR lt_arr_values.
+
+  IF g_dep_cit IS NOT INITIAL.
+    SELECT DISTINCT z_arr_city
+      FROM zflightschedule
+      WHERE z_dep_city = @g_dep_cit
+      INTO TABLE @DATA(lt_arr_cities).
+
+    LOOP AT lt_arr_cities INTO DATA(lv_arr).
+      ls_arr_value-key = lv_arr.
+      ls_arr_value-text = lv_arr.
+      APPEND ls_arr_value TO lt_arr_values.
+    ENDLOOP.
+  ELSE.
+
+    SELECT DISTINCT z_arr_city FROM zflightschedule INTO TABLE @DATA(lt_arr_cities_all).
+    LOOP AT lt_arr_cities_all INTO DATA(lv_arr_all).
+      ls_arr_value-key = lv_arr_all.
+      ls_arr_value-text = lv_arr_all.
+      APPEND ls_arr_value TO lt_arr_values.
+    ENDLOOP.
+  ENDIF.
+
+  CALL FUNCTION 'VRM_SET_VALUES'
+    EXPORTING
+      id     = 'G_ARR_CIT'
+      values = lt_arr_values.
+
+ENDMODULE.
+
+
+
+MODULE user_command_0200 INPUT.
+
+  CASE sy-ucomm.
+
+    WHEN 'BACK'.
+      SET SCREEN 0100.
+
+    WHEN 'EXECUTE'.
+      SET SCREEN 0300.
+
+  ENDCASE.
+
+
+
+ENDMODULE.
+
+
+*&---------------------------------------------------------------------*
+*& Module STATUS_0300 OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE status_0300 OUTPUT.
+  SET PF-STATUS 'DEP_ARR_SELECT'.
+  SET TITLEBAR 'WYBIERZ_LOT'.
+
+
+  SELECT zflightschedule~z_fli_nr,
+         zflightschedule~z_dep_city,
+         zflightschedule~z_arr_city,
+         zflightschedule~z_fli_date,
+         zflightschedule~z_dep_time,
+         zflightschedule~z_arr_time,
+         zflightschedule~zplane_nr,
+         zzz_pricelist~zbusscl,
+         zzz_pricelist~zeconcl,
+         zzz_pricelist~zbizprice,
+         zzz_pricelist~zecoprice,
+         zzz_pricelist~zcurrency
+       FROM zflightschedule
+    INNER JOIN zzz_pricelist
+    ON zflightschedule~z_fli_nr = zzz_pricelist~z_fli_nr
+    INTO CORRESPONDING FIELDS OF TABLE @lt_data
+    WHERE z_dep_city = @g_dep_cit
+    AND z_arr_city = @g_arr_cit.
+
+
+  DATA(lo_container) = NEW cl_gui_custom_container( container_name = 'G_ALV_TABLE' ).
+
+  DATA(lo_grid) = NEW cl_gui_alv_grid( i_parent = lo_container ).
+
+  LOOP AT lt_data ASSIGNING FIELD-SYMBOL(<fs_data>).
+    DATA(lv_zaj_biz) = 0.
+    DATA(lv_zaj_eco) = 0.
+
+
+    SELECT z_class
+      FROM zzz_reservations
+      WHERE z_fli_nr = @<fs_data>-z_fli_nr
+        AND z_dep_city = @<fs_data>-z_dep_city
+        AND z_arr_city = @<fs_data>-z_arr_city
+        AND z_fli_date = @<fs_data>-z_fli_date
+        AND z_dep_time = @<fs_data>-z_dep_time
+      INTO TABLE @DATA(lt_res).
+
+    LOOP AT lt_res INTO DATA(ls_res).
+      IF ls_res-z_class = 'BIZNES'.
+        lv_zaj_biz += 1.
+      ELSEIF ls_res-z_class = 'ECONOMY'.
+        lv_zaj_eco += 1.
+      ENDIF.
+    ENDLOOP.
+
+
+    <fs_data>-z_biz_status = |{ <fs_data>-zbusscl }/{ lv_zaj_biz }|.
+    <fs_data>-z_eco_status = |{ <fs_data>-zeconcl }/{ lv_zaj_eco }|.
+
+  ENDLOOP.
+
+
+
+  lo_grid->set_table_for_first_display(
+EXPORTING
+
+      i_structure_name        =  ''
+
+    CHANGING
+      it_outtab               =      lt_data
+it_fieldcatalog               =      lt_fieldcat
+
+EXCEPTIONS
+  invalid_parameter_combination = 1
+  program_error                 = 2
+  too_many_lines                = 3
+  OTHERS                        = 4
+  ).
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+  CREATE OBJECT gr_event_handler.
+  SET HANDLER gr_event_handler->on_double_click FOR lo_grid.
+
+
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0300  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE user_command_0300 INPUT.
+
+  CASE sy-ucomm.
+
+    WHEN 'BACK'.
+      SET SCREEN 0200.
+
+  ENDCASE.
+
+
+ENDMODULE.
+
+FORM handle_double_click USING iv_index TYPE lvc_index.
+  DATA: lv_answer TYPE c,
+        lv_zaj_biz TYPE i,
+        lv_zaj_eco TYPE i.
+
+  READ TABLE lt_data INTO gs_selected_flight INDEX iv_index.
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+
+    CLEAR: lv_zaj_biz, lv_zaj_eco.
+
+  SELECT z_class
+    FROM zzz_reservations
+    WHERE z_fli_nr   = @gs_selected_flight-z_fli_nr
+      AND z_dep_city = @gs_selected_flight-z_dep_city
+      AND z_arr_city = @gs_selected_flight-z_arr_city
+      AND z_fli_date = @gs_selected_flight-z_fli_date
+      AND z_dep_time = @gs_selected_flight-z_dep_time
+    INTO TABLE @DATA(lt_res2).
+
+  LOOP AT lt_res2 INTO DATA(ls_res2).
+    IF ls_res2-z_class = 'BIZNES'.
+      lv_zaj_biz += 1.
+    ELSEIF ls_res2-z_class = 'ECONOMY'.
+      lv_zaj_eco += 1.
+    ENDIF.
+  ENDLOOP.
+
+  CALL FUNCTION 'POPUP_TO_CONFIRM'
+    EXPORTING
+      titlebar              = 'Wybór biletu'
+      text_question         = 'Wybierz klasę:'
+      text_button_1         = 'BIZNES'
+      text_button_2         = 'ECONOMY'
+      default_button        = '1'
+      display_cancel_button = 'X'
+    IMPORTING
+      answer                = lv_answer.
+
+  CASE lv_answer.
+    WHEN '1'. " BIZNES
+      IF lv_zaj_biz >= gs_selected_flight-zbusscl.
+        MESSAGE 'Wszystkie miejsca w klasie biznes są zajęte!' TYPE 'E'.
+        RETURN.
+      ENDIF.
+      g_klasa = 'BIZNES'.
+      g_cena = gs_selected_flight-zbizprice.
+      MESSAGE 'Wybrano bilet biznesowy.' TYPE 'S'.
+
+    WHEN '2'. " ECONOMY
+      IF lv_zaj_eco >= gs_selected_flight-zeconcl.
+        MESSAGE 'Wszystkie miejsca w klasie ekonomicznej są zajęte!' TYPE 'E'.
+        RETURN.
+      ENDIF.
+      g_klasa = 'ECONOMY'.
+      g_cena = gs_selected_flight-zecoprice.
+      MESSAGE 'Wybrano bilet ekonomiczny.' TYPE 'S'.
+
+    WHEN 'A'.
+      MESSAGE 'Anulowano wybór.' TYPE 'I'.
+      RETURN.
+  ENDCASE.
+
+
+
+  SELECT SINGLE * INTO @gs_passenger FROM zzz_pass_tab WHERE zid_pass = @g_pass_nr.
+
+  g_numer_lotu      = gs_selected_flight-z_fli_nr.
+  g_wylot           = gs_selected_flight-z_dep_city.
+  g_przylot         = gs_selected_flight-z_arr_city.
+  g_data            = gs_selected_flight-z_fli_date.
+  g_godzina         = gs_selected_flight-z_dep_time.
+  g_waluta          = gs_selected_flight-zcurrency.
+  g_imie            = gs_passenger-z_fir_name.
+  g_nazwisko        = gs_passenger-z_sur_name.
+  g_typ_dokumentu   = gs_passenger-z_doc_type.
+  g_numer_dokumentu = gs_passenger-z_doc_nr.
+  g_nr_telefonu     = gs_passenger-z_tel_nr.
+  g_email           = gs_passenger-z_email_add.
+
+  SET SCREEN 0400.
+  LEAVE SCREEN.
+
+
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0400  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE user_command_0400 INPUT.
+
+  CASE sy-ucomm.
+
+    WHEN 'BACK'.
+      SET SCREEN 0300.
+
+    WHEN 'KUPUJE'.
+      DATA: lv_func_name TYPE rs38l_fnam.
+
+      CALL FUNCTION 'SSF_FUNCTION_MODULE_NAME'
+        EXPORTING
+          formname           = 'Z_INVOICE_TICKET'
+        IMPORTING
+          fm_name            = lv_func_name
+        EXCEPTIONS
+          no_form            = 1
+          no_function_module = 2
+          OTHERS             = 3.
+
+      IF sy-subrc = 0.
+
+        CALL FUNCTION lv_func_name
+          EXPORTING
+            zim_imie         = g_imie
+            zim_nazwisko     = g_nazwisko
+            zim_numer_lotu   = g_numer_lotu
+            zim_data         = g_data
+            zim_godzina      = g_godzina
+            zim_klasa        = g_klasa
+            zim_cena         = g_cena
+            zim_waluta       = g_waluta
+            zim_email        = g_email
+            zim_wylot        = g_wylot
+            zim_przylot      = g_przylot
+          EXCEPTIONS
+            formatting_error = 1
+            internal_error   = 2
+            send_error       = 3
+            user_canceled    = 4
+            OTHERS           = 5.
+
+        IF sy-subrc <> 0.
+          MESSAGE 'Błąd podczas drukowania formularza.' TYPE 'E'.
+        ENDIF.
+
+      ELSE.
+        MESSAGE 'Nie znaleziono formularza.' TYPE 'E'.
+      ENDIF.
+
+
+
+      ls_reservation-zid_pass     = g_pass_nr.
+      ls_reservation-z_fli_nr     = g_numer_lotu.
+      ls_reservation-z_dep_city   = g_wylot.
+      ls_reservation-z_arr_city   = g_przylot.
+      ls_reservation-z_fli_date   = g_data.
+      ls_reservation-z_dep_time   = g_godzina.
+      ls_reservation-z_class      = g_klasa.
+
+      INSERT zzz_reservations FROM ls_reservation.
+      IF sy-subrc = 0.
+        MESSAGE 'Rezerwacja została zapisana.' TYPE 'S'.
+      ELSE.
+        MESSAGE 'Błąd zapisu rezerwacji.' TYPE 'E'.
+      ENDIF.
+
+
+  ENDCASE.
+
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*& Module STATUS_0400 OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE status_0400 OUTPUT.
